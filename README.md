@@ -1,16 +1,71 @@
-# Norn/Miel/Cybele 遊戲文本提取器
+# Norn/Miel/Cybele 遊戲文本提取與翻譯工具
 
-須先解包xp3
+本工具包含兩支程式：
 
-[解包工具](https://github.com/lxl66566/xp3-pack-unpack)
+| 程式 | 功能 |
+| --- | --- |
+| `nornmiel_text_io.py` | 從 `scenario.ks` 提取 TSV，或將 TSV 譯文替換回腳本 |
+| `translate_tsv.py` | 呼叫 Ollama 批次翻譯 TSV，支援繁體轉換、續跑、定時休息與存檔重試 |
 
-解包後將 `data\scenario\scenario.ks` 放到此工具相同目錄
+## 事前準備：解包、提取與回填流程
 
-# Ollama TSV 日文翻譯工具使用教學
+須先解包 XP3。可參考：[xp3-pack-unpack 解包工具](https://github.com/lxl66566/xp3-pack-unpack)。
+
+解包後，將 `data\scenario\scenario.ks` 放到兩支 Python 工具的相同目錄，並另外保留一份未修改的原始腳本備份。解包工具的操作方式請參閱該專案說明。
+
+### A. 提取原文
+
+在工具目錄執行：
+
+```powershell
+python .\nornmiel_text_io.py
+```
+
+選擇 `1`。程式會擷取 `@name` 指令下一行的文字，在 `scenario.ks` 同目錄產生 `Translation-001.tsv`、`Translation-002.tsv` 等檔案，每份最多 50 筆。
+
+首次提取完成後，建立 `original` 資料夾並移入根目錄下剛產生的原文 TSV：
+
+```powershell
+New-Item -ItemType Directory -Path .\original -Force | Out-Null
+Get-ChildItem -LiteralPath . -Filter "Translation-*.tsv" -File |
+    Move-Item -Destination .\original
+```
+
+這段搬移指令只在首次整理時執行。若 `original` 已有同名檔，先確認版本；不要重新提取或覆蓋既有原文來處理翻譯錯誤。
+
+### B. 批次翻譯
+
+依照下方教學，以 `original` 為輸入、`translated` 為輸出。原始 TSV 保留於 `original`，程式逐筆保存翻譯進度。
+
+### C. 回填腳本
+
+先停止翻譯程式並校對輸出。回填工具只讀取 `scenario.ks` 同目錄下的 `Translation-*.tsv`，不會自動搜尋 `translated`。
+
+確認根目錄沒有其他批次殘留的 TSV，再將這批翻譯結果複製回去：
+
+```powershell
+Get-ChildItem -LiteralPath .\translated -Filter "Translation-*.tsv" -File |
+    Copy-Item -Destination . -Force
+python .\nornmiel_text_io.py
+```
+
+選擇 `2`，依提示確認備份。此範例使用平面資料夾；若翻譯輸出放在多個子目錄，需自行整理要回填的那一批檔案，避免同名檔互相覆蓋。
+
+回填行為：
+
+- 譯文空白時跳過，保留該行日文。
+- 原文、行號、角色、雜湊等驗證失敗時，取消整批寫入。
+- 目前寬鬆版遇到方括號標記不一致時，顯示缺少／新增標記的警告，仍寫入該筆譯文，不會自動補回標記。
+- 若在備份提示回答 `n`，程式會自動建立 `scenario.ks.bak`；同名檔存在時使用帶時間戳的名稱。回答 `y` 則表示自行完成備份，不另外建立。
+- 成功後將 `scenario.ks` 寫為 UTF-16 LE BOM，保留各行原有換行形式。
+
+標記警告不阻擋回填，但缺少或改動遊戲指令仍可能影響執行。回填後請進行遊戲內測試；重新回填另一批譯文前，先使用對應的原始 `scenario.ks` 副本，避免因腳本已變成中文而無法通過原文比對。
+
+## Ollama TSV 日文翻譯工具使用教學
 
 使用 `translate_tsv.py` 將資料夾內的日文 TSV 批次翻譯為台灣繁體中文。Python 負責讀檔、呼叫本機 Ollama、檢查回傳格式與儲存進度；Qwen 負責翻譯；OpenCC 負責轉換繁體字形。
 
-本教學對應含有 `--normalize-only`、`--pause-every`、`--pause-seconds` 的程式版本。指令以 Windows PowerShell 為例，模型名稱使用 `qwen3:14b`。
+本教學對應含有 `--normalize-only`、`--retry-japanese`、`--pause-every`、`--pause-seconds`、`--save-retries`、`--save-retry-delay` 的翻譯程式，以及方括號標記不一致時只警告的回填程式。指令以 Windows PowerShell 為例，模型名稱使用 `qwen3:14b`。
 
 ## 1. 快速開始
 
@@ -80,7 +135,9 @@ python -c "from opencc import OpenCC; print(OpenCC('s2tw').convert('这里是测
 
 | 路徑 | 內容 |
 | --- | --- |
-| `D:\翻譯工具\translate_tsv.py` | Python 程式 |
+| `D:\翻譯工具\nornmiel_text_io.py` | 提取／回填程式 |
+| `D:\翻譯工具\translate_tsv.py` | Ollama 翻譯程式 |
+| `D:\翻譯工具\scenario.ks` | 待提取／回填的遊戲腳本 |
 | `D:\翻譯工具\original\Translation-001.tsv` | 第 1 份原文 |
 | `D:\翻譯工具\original\Translation-002.tsv` | 第 2 份原文 |
 | `D:\翻譯工具\translated\Translation-001.tsv` | 對應輸出，由程式產生 |
@@ -105,7 +162,7 @@ T000001	21	地	　この世界には魔王がいた。		範例雜湊值
 T000002	25	シーリア	「勇者様、ありがとうございます」		另一筆範例雜湊值
 ```
 
-TSV 使用真正的 Tab 分隔欄位，不是用數個空白代替。上面的雜湊值是格式示意；程式不會驗算雜湊內容。
+TSV 使用真正的 Tab 分隔欄位，不是用數個空白代替。上面的雜湊值是格式示意，不能直接拿來回填。翻譯程式不驗算雜湊；提取／回填工具則會以行號、說話者與原文計算 SHA-256 並核對，因此不可自行改動這些原文欄位。
 
 | 欄位 | 用途 | 是否修改 |
 | --- | --- | --- |
@@ -116,7 +173,7 @@ TSV 使用真正的 Tab 分隔欄位，不是用數個空白代替。上面的�
 | `translated_text` | 繁體中文譯文 | 填入或轉換字形 |
 | `source_hash` | 原文雜湊或識別資訊 | 保留，不重新計算 |
 
-每筆必須有六欄，不接受額外空白列；同一份檔案內的 `id` 不可重複。只有空白的 `source_text` 會跳過。
+每筆必須有六欄，不接受額外空白列；同一份檔案內的 `id` 不可重複。翻譯程式會跳過空白原文，以及已有譯文的資料；加上 `--retry-japanese` 時則另處理符合條件的可疑譯文。回填工具還會檢查整批 TSV 的 `id` 與行號有沒有重複。
 
 輸出保留非譯文欄位的內容，但會透過 TSV 寫入器重新序列化，必要時產生引號跳脫。因此不保證輸出檔與原檔的位元組或引號形式完全相同。回填遊戲前，應用自己的匯入工具試讀。
 
@@ -128,7 +185,7 @@ TSV 使用真正的 Tab 分隔欄位，不是用數個空白代替。上面的�
 python .\translate_tsv.py --input .\original --output .\translated --model "qwen3:14b" --limit 3
 ```
 
-`--limit 3` 代表本次成功新增 3 筆譯文後停止，不是翻譯 3 個檔案，也不是固定處理檔案前三行。已有譯文、空白原文與翻譯失敗的資料不計入上限。
+`--limit 3` 代表本次成功完成並儲存 3 筆譯文後停止，包含指定的重翻，不是翻譯 3 個檔案，也不是固定處理檔案前三行。跳過的已有譯文、空白原文與翻譯失敗資料不計入上限。
 
 如果失敗很多，程式可能嘗試超過 3 筆資料，仍未達到 3 筆成功新增。
 
@@ -138,7 +195,7 @@ python .\translate_tsv.py --input .\original --output .\translated --model "qwen
 python .\translate_tsv.py --input .\original --output .\translated --model "qwen3:14b"
 ```
 
-省略 `--limit`，或指定 `--limit 0`，都代表沒有本次新增筆數上限。程式會處理輸入資料夾與子資料夾的所有 TSV。
+省略 `--limit`，或指定 `--limit 0`，都代表沒有本次成功完成筆數上限。程式會處理輸入資料夾與子資料夾的所有 TSV。
 
 檔案按路徑排序，檔內按原本資料列順序翻譯。建議以 `Translation-001.tsv`、`Translation-002.tsv` 等補零檔名維持章節順序。
 
@@ -150,7 +207,7 @@ python .\translate_tsv.py --input .\original --output .\translated --model "qwen
 
 計數規則：
 
-- 只計本次成功新增並儲存的譯文，跨檔案累計。
+- 計算本次成功新增或重翻並儲存的譯文，跨檔案累計。
 - 達到 50 筆後，在下一筆待翻譯資料開始前暫停 60 秒。
 - 不計已有譯文、空白原文、失敗資料，也不計 OpenCC 字形轉換。
 - 若全部完成，或已達 `--limit`，就直接結束，不額外休息一次。
@@ -196,9 +253,11 @@ python .\translate_tsv.py --input .\original --output .\translated --model "qwen
 
 每成功一筆就儲存整份對應輸出，使用暫存檔與替換方式降低半份檔案的風險。正在生成但尚未成功儲存的那一筆，之後會重新處理。
 
+存檔與 GPU 休息計數無關，不需要等到第 50 筆或休息時才儲存。若在存檔重試期間中斷，完整暫存副本會保留並顯示位置，但不會在下次自動載入；請參閱 5.8 的恢復步驟。
+
 ### 5.6 重新翻譯
 
-目前沒有 `--overwrite` 或 `--retranslate` 參數。
+目前沒有 `--overwrite` 或 `--retranslate` 參數。`--retry-japanese` 只會選擇性重翻疑似殘留日文的資料，不是強制重翻全部。
 
 若想比較另一個模型的翻譯，使用新的輸出資料夾：
 
@@ -210,6 +269,65 @@ python .\translate_tsv.py --input .\original --output .\translated_new --model "
 
 若只想重翻少數幾筆，可先備份輸出 TSV，在程式停止時清空那些資料列的 `translated_text`，再執行原本指令。此方式適用於原始輸入的對應譯文原本為空白；其他欄位請保持一致。
 
+### 5.7 重新處理疑似殘留日文的譯文
+
+```powershell
+python .\translate_tsv.py --input .\original --output .\translated --model "qwen3:14b" --retry-japanese --pause-every 50 --pause-seconds 60
+```
+
+程式會繼續翻譯空白欄位，並額外重翻已有譯文中疑似殘留連續平假名的資料。其他已有譯文會跳過。
+
+- 新產生的譯文一律執行平假名檢查；偵測到可疑片段時，補充提示並依 `--retries` 重新翻譯。
+- 判斷條件是至少兩個連續平假名字元，後續可含長音符。比對前會排除同檔 `speaker` 的名稱，以及部分大括號、尖括號區段。
+- 可疑的前文譯文不會作為模型的中文參考答案；其原文仍會提供。
+- 成功替換已有譯文前，首次建立 `.before_retry_japanese.bak`；已有同名備份不覆蓋。
+- 重翻失敗時保留舊譯文；原本空白的資料仍留空。下次以相同參數執行可再次處理。
+- 成功重翻的筆數計入 `--limit` 與定期休息計數。
+- 不可與 `--normalize-only` 同時使用。
+
+這是啟發式檢查，不是完整的翻譯品質判斷。片假名、單個平假名、純漢字的未譯內容可能漏檢；未列於 `speaker` 的平假名專名也可能誤判。若持續誤判，請人工校對，避免反覆重跑整批。
+
+### 5.8 存檔自動重試與暫存檔恢復
+
+```powershell
+python .\translate_tsv.py --input .\original --output .\translated --model "qwen3:14b" --pause-every 50 --pause-seconds 60 --save-retries 10 --save-retry-delay 2
+```
+
+這兩個存檔參數的預設值就是 10 次與 2 秒，省略也會啟用。
+
+程式會先完整寫好一份 `.tmp`，再嘗試替換正式 TSV。若替換遇到權限拒絕或 Windows 檔案占用錯誤，就重試相同暫存檔；不會為了存檔再次呼叫模型，也不會先刪除正式檔來繞過鎖定。
+
+| 情況 | 行為 |
+| --- | --- |
+| 短暫占用 | 等待設定秒數，再次嘗試替換 |
+| 重試成功 | 正式 TSV 更新，繼續下一筆 |
+| 次數用完 | 停止程式，保留原正式檔與已完成的暫存副本 |
+| 等待時按 `Ctrl+C` | 中斷程式，保留已完成的暫存副本 |
+| 磁碟空間不足等其他錯誤 | 直接回報，不反覆重試；是否有完整副本取決於暫存寫入是否已完成 |
+
+`--save-retries 10` 包含首次嘗試，最多等待 9 個間隔。存檔重試與模型請求的 `--retries` 分開計算。這項重試針對替換正式檔的步驟；建立暫存檔、寫入資料或建立備份時若失敗，不保證能進入替換重試。
+
+若完整暫存檔被保留，程式會印出類似 `Translation-021.tsv隨機字串.tmp` 的完整路徑。它是完整 TSV 快照，不只是失敗那一行，但不會自動載入。
+
+手動恢復步驟：
+
+1. 確認翻譯程式已停止，關閉占用該 TSV 的其他程式。
+2. 備份目前正式 TSV；如果有多個暫存檔，先比較內容並選擇正確版本。
+3. 將所選暫存檔複製為原正式檔名，不要更動原始 `original` 資料夾。
+4. 重新執行原本指令，程式會比對原文並從正式 TSV 接續。
+
+以下是恢復範例；必須將 `$snapshot` 換成錯誤訊息顯示的實際暫存檔路徑：
+
+```powershell
+$target = ".\translated\Translation-021.tsv"
+$snapshot = ".\translated\Translation-021.tsv實際隨機字串.tmp"
+$stamp = Get-Date -Format "yyyyMMdd-HHmmssfff"
+Copy-Item -LiteralPath $target -Destination "$target.before_recover.$stamp.bak"
+Copy-Item -LiteralPath $snapshot -Destination $target -Force
+```
+
+若正式檔尚未建立，略過第一個 `Copy-Item` 備份步驟。確認恢復成功後再自行清理暫存檔。
+
 ## 6. 全部命令列參數
 
 | 參數 | 預設值 | 說明 |
@@ -218,12 +336,15 @@ python .\translate_tsv.py --input .\original --output .\translated_new --model "
 | `--output` | 必填 | 獨立輸出資料夾 |
 | `--model` | `qwen:14b` | 模型完整名稱；請明確填入實際安裝名稱，例如 `qwen3:14b` |
 | `--url` | `http://localhost:11434` | Ollama 基礎位址，程式自行附加 `/api/generate` |
-| `--limit` | `0` | 本次成功新增譯文上限；0 為不限，不能為負數 |
+| `--limit` | `0` | 本次成功完成譯文上限，包含重翻；0 為不限，不能為負數 |
 | `--timeout` | `300` | 每次模型請求的逾時設定，單位秒，必須大於 0 |
 | `--retries` | `3` | 每筆請求最多嘗試次數，包含第一次；必須大於 0 |
-| `--pause-every` | `0` | 每成功新增幾筆後暫停；0 關閉，不能為負數 |
+| `--save-retries` | `10` | 替換正式 TSV 遭拒時最多嘗試次數，包含第一次；必須大於 0 |
+| `--save-retry-delay` | `2` | 存檔重試間隔秒數，非負整數；0 表示立即重試 |
+| `--pause-every` | `0` | 每成功完成幾筆後暫停，包含重翻；0 關閉，不能為負數 |
 | `--pause-seconds` | `60` | 暫停秒數，接受非負整數；0 關閉 |
 | `--normalize-only` | 關閉 | 只轉換已有譯文，不呼叫模型 |
+| `--retry-japanese` | 關閉 | 額外重翻已有譯文中疑似殘留連續平假名的資料 |
 | `-h` / `--help` | — | 顯示說明後離開 |
 
 查看程式內建說明：
@@ -252,6 +373,8 @@ python .\translate_tsv.py --input .\original --output .\translated --model "qwen
 
 不足的前後文就少提供幾筆，不會跨檔案取用。
 
+前文若被判斷為疑似殘留日文，其 `translated_text` 會以空字串提供，降低後續模仿未翻譯內容的機會。
+
 提示詞要求使用自然的台灣繁體中文、忠於原意、不摘要、不增加情節；將「地」當旁白；參考前文的人名術語，未知人名保留原文。模型回傳 `{"translation":"譯文"}`，由程式取出譯文欄位。
 
 ### 輸出檢查
@@ -261,6 +384,10 @@ python .\translate_tsv.py --input .\original --output .\translated --model "qwen
 OpenCC 轉換時會避開部分控制碼、大括號內容與尖括號標籤；但這不代表翻譯階段已完整驗證所有遊戲標籤。遊戲自訂語法仍需額外檢查。
 
 既有譯文的轉換模式不會重新執行模型輸出驗證。這些檢查也無法判斷文意是否正確、是否漏譯或人物稱呼是否一致。
+
+新版另有連續平假名的啟發式檢查，詳細規則與限制見 5.7。沒有偵測到平假名，不代表文意或整句翻譯已完整驗證。
+
+翻譯程式目前沒有完整驗證方括號標記。回填工具則會比對 `[...]` 完整字串及出現次數；目前寬鬆版只警告、不阻擋替換，也不檢查標記順序或自動補齊。請自行校對遊戲控制碼。
 
 ### 固定的模型設定
 
@@ -306,7 +433,7 @@ ollama list
 
 `qwen:14b`、`qwen2.5:14b`、`qwen3:14b` 是不同名稱。請把 `--model` 改為 `NAME` 欄顯示的完整名稱。
 
-新版會顯示 HTTP 錯誤回應的詳細內容。HTTP 4xx 對該筆不重試，保留空白後繼續下一筆；若是模型名稱錯誤，請先停止並修正，避免整批都失敗。
+新版會顯示 HTTP 錯誤回應的詳細內容。HTTP 4xx 對該筆不重試，保留原有譯文或空白後繼續下一筆；若是模型名稱錯誤，請先停止並修正，避免整批都失敗。
 
 ### 無法連線到 Ollama
 
@@ -328,7 +455,7 @@ python -m pip install opencc-python-reimplemented
 
 即使使用 `--normalize-only`，也需要此套件。
 
-### unrecognized arguments: --pause-every
+### unrecognized arguments: --pause-every／--retry-japanese／--save-retries
 
 表示目前執行的程式版本沒有這個參數。先停止翻譯，替換新版 `translate_tsv.py`，再執行 `--help` 確認。也請確認終端機所在資料夾正確，沒有執行另一份同名程式。
 
@@ -342,7 +469,7 @@ python -m pip install opencc-python-reimplemented
 
 ### 譯文遺漏控制碼、JSON 格式錯誤、輸出未完成或逾時
 
-一般請求與驗證失敗會依 `--retries` 重試；預設最多嘗試 3 次，前兩次失敗分別等待 2、4 秒。最後仍失敗則保留空白，繼續下一筆。
+一般請求與驗證失敗會依 `--retries` 重試；預設最多嘗試 3 次，前兩次失敗分別等待 2、4 秒。最後仍失敗則保留原有譯文或空白，繼續下一筆。
 
 可以重新執行相同指令處理失敗筆數；如果同一筆一直失敗，應檢查原文的特殊語法、回傳格式或生成長度，而非一直增加重試次數。
 
@@ -350,15 +477,31 @@ python -m pip install opencc-python-reimplemented
 
 關閉可能鎖住 TSV 的編輯器、試算表程式或另一支翻譯程序，確認輸出資料夾可寫入，再重新執行。已完成的輸出可作為續跑進度。
 
+新版會針對替換時的權限／占用錯誤自動重試，預設最多 10 次、每次間隔 2 秒。若一直被占用，重試仍會失敗。完整暫存檔的恢復方式見 5.8。
+
+### 譯文非空白，但還含日文
+
+已有內容預設會被跳過；可加上 `--retry-japanese` 選擇性重翻。此功能只抓部分平假名情況，不能處理所有片假名、漢字或語意漏譯，仍需人工校對。
+
+### 回填時出現「方括號標記不一致」
+
+目前寬鬆版會印出缺少／新增的標記，仍將該筆譯文寫入。如果程式仍顯示驗證失敗並取消整批，請確認已替換為寬鬆版 `nornmiel_text_io.py`。其他驗證錯誤仍會阻擋回填，不應直接忽略。
+
+### 回填時顯示原文不符，或找不到翻譯
+
+確認 `scenario.ks` 是當初提取時的原始版本，而且要回填的 `Translation-*.tsv` 已複製到它的同一目錄。回填工具不會自動搜尋 `translated`；先前已回填為中文的腳本也不再符合原文比對。
+
 ## 9. 完成後如何確認
 
 全部處理後，終端機會顯示類似：
 
 ```text
-完成：本次新增 47 筆，失敗 0 次，尚未翻譯 0 筆。
+完成：本次新增 47 筆，重翻 1 筆，失敗 0 次，尚未翻譯 0 筆，疑似殘留日文 0 筆。
 ```
 
 「本次新增」不包含先前完成的譯文；「尚未翻譯」計算的是原文非空白、譯文仍空白的資料。只有空白原文的資料不會被當成未完成。
+
+「重翻」表示本次成功替換的既有可疑譯文；「疑似殘留日文」會檢查目前所有非空白譯文，不限本次產生的資料。畫面上的 `[檔名] 10/50 Txxxxxx` 表示開始處理該筆，不代表該筆已成功存檔。
 
 Windows PowerShell 可查看程式結束代碼：
 
@@ -369,7 +512,7 @@ $LASTEXITCODE
 | 代碼 | 常見意義 |
 | --- | --- |
 | `0` | 正常完成；也可能只是達到 `--limit` 或完成字形轉換，不一定代表全批翻完 |
-| `1` | 整批跑完仍有未翻譯資料、發生處理錯誤，或達到 limit 前有失敗資料 |
+| `1` | 仍有未翻譯資料、發生處理／存檔錯誤、達到 limit 前有失敗資料，或啟用重翻模式後仍有可疑日文 |
 | `2` | 命令列參數或前置檢查錯誤 |
 | `130` | 使用者以 `Ctrl+C` 中斷 |
 
@@ -384,11 +527,15 @@ $LASTEXITCODE
 - 休息計數不持久化；重新執行會從零累計。
 - 不會監測 GPU 溫度，也不會根據溫度自動調整負載。定期休息是時間排程。
 - 使用新輸出資料夾可保留舊版結果；字形轉換的 `.bak` 不是每次翻譯都建立的版本備份。
+- 上述雜湊與回填限制指 `translate_tsv.py`；`nornmiel_text_io.py` 會驗算雜湊並可執行回填。
+- 日文殘留檢查只是啟發式判斷，可能漏檢或誤判。
+- 存檔重試不會解除永久占用或修正檔案權限；保留的 `.tmp` 也不會自動恢復。
+- 回填時的方括號警告不代表標記差異一定無害，寬鬆模式也不會修正標記。
 
 日常使用可保留這條指令，並將模型名稱換成你實際安裝的名稱：
 
 ```powershell
-python .\translate_tsv.py --input .\original --output .\translated --model "qwen3:14b" --pause-every 50 --pause-seconds 60
+python .\translate_tsv.py --input .\original --output .\translated --model "qwen3:14b" --pause-every 50 --pause-seconds 60 --save-retries 10 --save-retry-delay 2
 ```
 
 ## 免責聲明
