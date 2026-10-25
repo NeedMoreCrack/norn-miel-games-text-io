@@ -354,7 +354,7 @@ def replace_mode(scenario: Path) -> None:
         raise TranslationError("沒有任何可替換的翻譯，scenario.ks 沒有被修改。")
 
     print(f"來源編碼：{encoding}")
-    already_backed_up = ask_yes_no("你是否已經備份 scenario.ks(選否的話會自動備份 scenario.ks)？")
+    already_backed_up = ask_yes_no("你是否已經備份 scenario.ks？ (選否的話會自動備份 scenario.ks)")
     backup: Path | None = None
     if not already_backed_up:
         backup = next_backup_path(scenario)
