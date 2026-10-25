@@ -1,0 +1,42 @@
+# PyCharm / JetBrains project settings
+.idea/
+*.iml
+
+# Python virtual environments
+.venv/
+venv/
+env/
+
+# Python bytecode and caches
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.pyright/
+
+# Coverage and build output
+.coverage
+.coverage.*
+htmlcov/
+build/
+dist/
+*.egg-info/
+
+# Local environment and logs
+.env
+.env.*
+!.env.example
+*.log
+*.tmp
+
+# Game scripts, translations, and backups (local/copyrighted content)
+scenario.ks
+scenario.ks*.bak
+Translation-*.tsv
+
+# Operating-system files
+.DS_Store
+Thumbs.db
+Desktop.ini
