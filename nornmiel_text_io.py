@@ -218,7 +218,7 @@ def format_row_location(row: dict[str, str]) -> str:
 
 
 def prepare_replacements(
-    rows: list[dict[str, str]], lines: list[str]
+        rows: list[dict[str, str]], lines: list[str]
 ) -> tuple[dict[int, str], int, list[str]]:
     replacements: dict[int, str] = {}
     skipped = 0
@@ -286,8 +286,14 @@ def prepare_replacements(
         source_tags = Counter(INLINE_TAG_PATTERN.findall(source))
         translated_tags = Counter(INLINE_TAG_PATTERN.findall(translated))
         if source_tags != translated_tags:
-            errors.append(f"{location}：翻譯沒有完整保留原文的方括號標記。")
-            continue
+            # Non-blocking: keep the translated text exactly as supplied.
+            # Other validation failures still cancel the replacement operation.
+            missing_tags = dict(source_tags - translated_tags)
+            extra_tags = dict(translated_tags - source_tags)
+            print(
+                f"警告：{location}：方括號標記不一致，仍繼續替換。"
+                f"缺少標記：{missing_tags}；新增標記：{extra_tags}"
+            )
 
         leading = LEADING_SPACE_PATTERN.match(source).group(0)
         translated_body = LEADING_SPACE_PATTERN.sub("", translated, count=1)
@@ -315,11 +321,11 @@ def write_utf16le_atomic(scenario: Path, text: str) -> None:
     temporary_name: str | None = None
     try:
         with tempfile.NamedTemporaryFile(
-            mode="wb",
-            prefix=scenario.name + ".",
-            suffix=".tmp",
-            dir=scenario.parent,
-            delete=False,
+                mode="wb",
+                prefix=scenario.name + ".",
+                suffix=".tmp",
+                dir=scenario.parent,
+                delete=False,
         ) as stream:
             temporary_name = stream.name
             stream.write(payload)
