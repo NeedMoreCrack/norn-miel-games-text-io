@@ -34,6 +34,7 @@ dist/
 # Game scripts, translations, and backups (local/copyrighted content)
 scenario.ks
 Translation-*.tsv
+*.bak
 
 # Operating-system files
 .DS_Store
