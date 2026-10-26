@@ -35,6 +35,10 @@ dist/
 scenario.ks
 Translation-*.tsv
 *.bak
+*.xp3
+xp3-pack-unpack.exe
+pack-unpack.exe
+.nornmiel_audio_patch_*/
 
 # Operating-system files
 .DS_Store
