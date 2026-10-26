@@ -1,17 +1,25 @@
-# Norn/Miel/Cybele 遊戲文本提取與翻譯工具
+# Norn/Miel/Cybele 遊戲文本提取、翻譯與音效修補工具
 
-本工具包含兩支程式：
+本工具包含三支程式，分別處理文本提取／回填、Ollama 翻譯與 XP3 音效修補：
 
 | 程式 | 功能 |
 | --- | --- |
 | `nornmiel_text_io.py` | 從 `scenario.ks` 提取 TSV，或將 TSV 譯文替換回腳本 |
 | `translate_tsv.py` | 呼叫 Ollama 批次翻譯 TSV，支援繁體轉換、續跑、定時休息與存檔重試 |
+| `nornmiel_audio_xp3_patcher.py` | 自動解包 XP3、修改指定音效與回想音訊控制、重新封包；缺少打包器時自動下載 |
 
-## 事前準備：解包、提取與回填流程
+## 選擇要執行的流程
 
-須先解包 XP3。可參考：[xp3-pack-unpack 解包工具](https://github.com/lxl66566/xp3-pack-unpack)。
+- **文字翻譯**：準備解包後的 `scenario.ks` → 提取 TSV → Ollama 翻譯 → 回填腳本。回填工具不會自動將腳本打包回 XP3。
+- **音效修補**：執行 `nornmiel_audio_xp3_patcher.py`，由程式自動解包、修改與重新封包。不需要 TSV、Ollama 或 OpenCC，操作詳見下方「XP3 音效自動修補」。
 
-解包後，將 `data\scenario\scenario.ks` 放到兩支 Python 工具的相同目錄，並另外保留一份未修改的原始腳本備份。解包工具的操作方式請參閱該專案說明。
+兩種流程可分別執行。請使用與該遊戲版本相符的原始腳本及封包；音效修補器會檢查目標腳本結構，不能保證適用於所有 Norn/Miel/Cybele 遊戲。
+
+## 文字翻譯流程：解包、提取與回填
+
+文字提取／回填工具須先準備解包後的腳本。可參考：[xp3-pack-unpack 解包工具](https://github.com/lxl66566/xp3-pack-unpack)。
+
+解包後，將 `data\scenario\scenario.ks` 放到 `nornmiel_text_io.py` 與 `translate_tsv.py` 的相同目錄，並另外保留一份未修改的原始腳本備份。實際路徑依解包輸出而定；解包工具的操作方式請參閱該專案說明。自動下載打包器目前屬於音效修補器的功能，不是這兩支文本程式的功能。
 
 ### A. 提取原文
 
@@ -61,6 +69,8 @@ python .\nornmiel_text_io.py
 
 標記警告不阻擋回填，但缺少或改動遊戲指令仍可能影響執行。回填後請進行遊戲內測試；重新回填另一批譯文前，先使用對應的原始 `scenario.ks` 副本，避免因腳本已變成中文而無法通過原文比對。
 
+回填只會修改這份 `scenario.ks`。要在遊戲中使用譯文，還需要將它放回正確的解包資料路徑，再依遊戲的資源載入方式使用，或自行重新封包；本工具沒有「將 TSV 翻譯自動打包回 XP3」功能。音效修補器也不會讀取外部 TSV 或這份獨立腳本來合併譯文。
+
 ## Ollama TSV 日文翻譯工具使用教學
 
 使用 `translate_tsv.py` 將資料夾內的日文 TSV 批次翻譯為台灣繁體中文。Python 負責讀檔、呼叫本機 Ollama、檢查回傳格式與儲存進度；Qwen 負責翻譯；OpenCC 負責轉換繁體字形。
@@ -108,6 +118,7 @@ python .\translate_tsv.py --input .\original --output .\translated --model "qwen
 | 項目 | 需求或用途 |
 | --- | --- |
 | Python | 3.9 以上 |
+| Windows x64 | 音效修補器的自動下載固定使用 Windows x64 MSVC 版本打包器 |
 | Ollama | 已安裝且服務正在執行 |
 | 模型 | 已存在於本機，名稱須與 `ollama list` 一致 |
 | OpenCC | 安裝 `opencc-python-reimplemented` |
@@ -137,6 +148,7 @@ python -c "from opencc import OpenCC; print(OpenCC('s2tw').convert('这里是测
 | --- | --- |
 | `D:\翻譯工具\nornmiel_text_io.py` | 提取／回填程式 |
 | `D:\翻譯工具\translate_tsv.py` | Ollama 翻譯程式 |
+| `D:\翻譯工具\nornmiel_audio_xp3_patcher.py` | XP3 音效修補程式；操作目錄另見音效教學 |
 | `D:\翻譯工具\scenario.ks` | 待提取／回填的遊戲腳本 |
 | `D:\翻譯工具\original\Translation-001.tsv` | 第 1 份原文 |
 | `D:\翻譯工具\original\Translation-002.tsv` | 第 2 份原文 |
@@ -520,6 +532,8 @@ $LASTEXITCODE
 
 ## 10. 目前功能邊界
 
+以下限制主要針對文本翻譯流程；音效修補器的流程與備份規則另列於下一節。
+
 - 沒有跨檔案的人名表、術語表或長期記憶；每檔只參考附近幾筆內容。
 - OpenCC 改善簡繁字形，無法保證語意、台灣用語或姓名正確。
 - `source_hash` 只保留並參與續跑比對，不驗算 SHA-256。
@@ -537,6 +551,145 @@ $LASTEXITCODE
 ```powershell
 python .\translate_tsv.py --input .\original --output .\translated --model "qwen3:14b" --pause-every 50 --pause-seconds 60 --save-retries 10 --save-retry-delay 2
 ```
+
+## XP3 音效自動修補
+
+### 1. 功能與必要環境
+
+執行檔案：`nornmiel_audio_xp3_patcher.py`。這是互動式程式，目前沒有命令列參數；依終端機提示操作即可。
+
+| 項目 | 行為 |
+| --- | --- |
+| 指定音效循環 | 將 `scenario.ks` 中 `se904`、`se905` 的有效 `@SE`／`@playse` 或對應行首標籤設為 `loop=true` |
+| SE 巨集 | 將 `macro.ks` 中 SE 巨集的 `@playse` 設為 `loop=%loop\|false`，未指定時預設不循環 |
+| 換句停止舊語音 | 在 `name` 巨集中加入／更新 buf 0 的條件停止指令，依 `tf.isPlayVoice` 判斷 |
+| 回想設定介面 | 開啟設定時保存並暫停 buf 0、1、2 的音效狀態，返回時恢復；限回想模式 |
+| 離開回想 | 在 `scenemode.ks` 的 `*return` 區段補入停止 buf 0、1、2 與重設語音旗標的指令 |
+| 封包處理 | 解包 → 修補腳本 → 驗證修補結果 → 重新封包 → 可選擇重新解包驗證 → 備份並替換原 XP3 |
+
+需要 Python 3.9 以上、可寫入的遊戲目錄，以及對應遊戲的 XP3。此程式使用 Python 標準函式庫，不需安裝 OpenCC 或啟動 Ollama。自動下載的打包器是 Windows x64 版本。
+
+程式必須在解包結果中唯一找到同一資料夾下的 `scenario.ks`、`macro.ks`、`scenemode.ks`、`sub.ks`。若找不到目標音效、巨集或必要標籤，會停止，不會直接套用到不符結構的遊戲。
+
+### 2. 執行方式
+
+先關閉遊戲，將修補程式放在含有 XP3 的遊戲目錄。例如：
+
+| 路徑 | 內容 |
+| --- | --- |
+| `D:\遊戲\nornmiel_audio_xp3_patcher.py` | 音效修補程式 |
+| `D:\遊戲\data.xp3` | 要修補的封包 |
+| `D:\遊戲\xp3-pack-unpack.exe` | 可選；缺少時自動下載 |
+
+在 PowerShell 執行：
+
+```powershell
+Set-Location -LiteralPath "D:\遊戲"
+python .\nornmiel_audio_xp3_patcher.py
+```
+
+也可將程式留在工具目錄，以完整路徑執行：
+
+```powershell
+Set-Location -LiteralPath "D:\遊戲"
+python "D:\翻譯工具\nornmiel_audio_xp3_patcher.py"
+```
+
+`-LiteralPath` 適合包含 `[`、`]` 等字元的目錄，避免 PowerShell 將它們當成萬用字元。
+
+### 3. 目錄與封包選擇
+
+1. 優先檢查目前工作目錄是否有 `.xp3`，再檢查腳本所在目錄。
+2. 都找不到時，提示輸入遊戲目錄的完整路徑；直接 Enter 取消。
+3. 所選目錄有 `data.xp3` 時優先使用它。
+4. 沒有 `data.xp3` 但只有一個 XP3 時，自動選擇該檔。
+5. 有多個候選時，依畫面列出的編號選擇。
+
+程式會先尋找／下載打包器，再選擇封包，因此缺少打包器時，下載可能在「是否開始修補」的確認提示之前發生。
+
+### 4. 打包器自動下載與清理
+
+程式依序在遊戲目錄、目前工作目錄、腳本目錄尋找：
+
+```text
+xp3-pack-unpack.exe
+pack-unpack.exe
+```
+
+找到就直接使用，不檢查更新。都找不到時，才自動處理以下附件：
+
+- 專案：[lxl66566/xp3-pack-unpack](https://github.com/lxl66566/xp3-pack-unpack/releases)
+- 附件名稱：`xp3-pack-unpack-x86_64-pc-windows-msvc.zip`
+
+自動流程：
+
+1. 透過 GitHub API 查詢 Latest 正式 Release。
+2. 若 Latest 沒有指定附件，繼續依 Release 清單順序尋找第一個符合名稱的正式版本；排除草稿與預發行版本，不以版本號大小排序。
+3. 下載到目前工作目錄，確認檔案大小，再解壓縮到該目錄，保留 ZIP 內的相對路徑。
+4. 確認解壓縮成功且能唯一找到打包器後，刪除剛下載的 ZIP。
+5. 使用該 EXE 接續修補流程。
+
+「目前工作目錄」是執行 Python 指令時所在的位置，不一定等於腳本目錄或提示中指定的遊戲目錄。使用上一節先切換到遊戲目錄的指令，就會下載到遊戲目錄。
+
+| 情況 | 處理方式 |
+| --- | --- |
+| 已有可用名稱的 EXE | 直接使用，不下載；不會自動清理原本就有的 ZIP |
+| 目前目錄已有同名 ZIP | 停止下載，請先檢查並移走或改名；不覆蓋、不自動刪除 |
+| ZIP 損壞或解壓縮失敗 | 停止；已完成下載的 ZIP 保留供檢查 |
+| ZIP 內檔案與現有檔案內容不同 | 停止，不覆蓋既有檔案；內容完全相同的既有檔案可保留 |
+| GitHub 連線或 API 失敗 | 顯示錯誤後停止，沒有自動網路重試或登入流程 |
+| 正常下載與解壓縮完成 | EXE 與其他解壓內容留下，下載的 ZIP 刪除 |
+
+若無法連線 GitHub，可自行從 Release 下載並解壓縮，將 EXE 放到上述三個搜尋目錄之一，再重新執行。保留 ZIP 以供檢查的規則不代表所有下載失敗都會留下完整 ZIP；未完成的下載暫存檔會被清理。
+
+### 5. 確認、驗證與備份
+
+程式會顯示遊戲目錄、打包器、目標 XP3、檔案大小與可用空間。
+
+| 提示 | 預設／行為 |
+| --- | --- |
+| 是否開始自動解包、修改及重新封包？ | 預設否；輸入 `y` 開始，直接 Enter 取消 |
+| 是否重新解開新封包進行完整驗證？ | 預設是；直接 Enter 會驗證，輸入 `n` 可略過這次重新解包 |
+| 磁碟空間少於 XP3 的三倍 | 只警告，不強制停止；實際所需空間依解包大小及驗證流程而定 |
+
+即使略過重新解包，重新封包前的腳本修補驗證仍會執行。「完整驗證」是重新解包後核對修補腳本，不代表已啟動遊戲或驗證遊戲的所有資源。
+
+替換原始 XP3 前會自動備份，無須另外確認備份選項。例如目標是 `data.xp3`：
+
+```text
+data.xp3.bak
+```
+
+若同名備份已存在，會改用帶時間戳與必要編號的檔名。備份大小確認一致後，才以新 XP3 替換原檔。實際備份名稱與位置會顯示在終端機。
+
+修補用的解包／驗證資料放在遊戲目錄的臨時工作資料夾，結束時會嘗試清理，包含失敗時。因此失敗後不能假設解包內容仍保留供續跑。此程式沒有 TSV 翻譯那套逐筆續跑、存檔重試或定時休息參數。
+
+### 6. 還原原始 XP3
+
+先關閉遊戲並確認修補程式已結束。備份目前修補版，再將指定的 `.bak` 複製回原檔。請依終端機顯示的實際檔名調整：
+
+```powershell
+$archive = ".\data.xp3"
+$backup = ".\data.xp3.bak"
+$stamp = Get-Date -Format "yyyyMMdd-HHmmssfff"
+Copy-Item -LiteralPath $archive -Destination "$archive.patched.$stamp.bak"
+Copy-Item -LiteralPath $backup -Destination $archive -Force
+```
+
+若做過多次修補，請選對備份版本；最新一次修補前的備份不一定是最初的未修改封包。
+
+### 7. 常見問題
+
+| 問題 | 檢查方式 |
+| --- | --- |
+| 找不到 XP3 | 確認目前工作目錄或輸入的遊戲目錄包含正確封包；不會遞迴搜尋整個遊戲目錄 |
+| 同名 ZIP 已存在 | 檢查是否為上次保留的下載；移走或改名後重跑，或手動解壓縮並放好 EXE |
+| 解壓縮會覆蓋既有檔案 | 檢查畫面列出的衝突路徑，將衝突檔先移到其他位置後重試 |
+| 找不到 `scenario.ks` 等四份腳本 | 所選 XP3 可能不是腳本封包，或遊戲結構不符合這支修補器 |
+| 找不到目標音效或巨集／標籤不唯一 | 該遊戲或版本可能不適用，需先檢查程式預期的腳本結構 |
+| 打包器結束代碼不是 0 | 查看打包器輸出；下載成功不代表工具一定支援該 XP3 的格式或加密方式 |
+| 封包替換時存取被拒 | 關閉遊戲及可能占用封包的其他程式，確認目錄可寫入；音效修補器沒有自動存檔重試 |
+| 不知道修補有沒有生效 | 查看完成與備份訊息，再進入遊戲測試指定音效、換句語音與回想設定操作 |
 
 ## 免責聲明
 
