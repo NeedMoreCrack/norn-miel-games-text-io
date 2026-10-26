@@ -5,18 +5,27 @@
 from __future__ import annotations
 
 import codecs
+import filecmp
+import json
 import os
 import re
 import shutil
 import subprocess
 import sys
+import stat
 import tempfile
+import urllib.error
+import urllib.request
+import zipfile
 from dataclasses import dataclass
 from datetime import datetime
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 
 PACKER_NAMES = ("xp3-pack-unpack.exe", "pack-unpack.exe")
+PACKER_REPOSITORY = "lxl66566/xp3-pack-unpack"
+PACKER_ASSET_NAME = "xp3-pack-unpack-x86_64-pc-windows-msvc.zip"
+PACKER_API_BASE = f"https://api.github.com/repos/{PACKER_REPOSITORY}"
 TARGET_SE_NAMES = ("se904", "se905")
 STOP_AUDIO_LINES = (
     "@stopse buf=0",
@@ -115,11 +124,12 @@ def find_game_directory() -> Path:
             candidates.append(directory)
 
     for directory in candidates:
-        has_packer = any((directory / name).is_file() for name in PACKER_NAMES)
-        if has_packer and any(directory.glob("*.xp3")):
+        # The packer can be installed automatically, so its absence must not
+        # prevent detecting an otherwise valid game directory.
+        if any(path.is_file() for path in directory.glob("*.xp3")):
             return directory
 
-    print("目前資料夾與腳本資料夾都找不到打包器及 XP3。")
+    print("目前資料夾與腳本資料夾都找不到 XP3。")
     entered = input("請輸入遊戲啟動目錄的完整路徑（直接 Enter 取消）：").strip().strip('"')
     if not entered:
         raise PatchError("操作已取消。")
@@ -130,13 +140,163 @@ def find_game_directory() -> Path:
 
 
 def find_packer(game_directory: Path) -> Path:
-    for name in PACKER_NAMES:
-        path = game_directory / name
-        if path.is_file():
-            return path
-    raise PatchError(
-        "找不到 xp3-pack-unpack.exe（也沒有找到相容名稱 pack-unpack.exe）。"
+    for directory in dict.fromkeys(
+            (game_directory.resolve(), Path.cwd().resolve(), Path(__file__).resolve().parent)
+    ):
+        for name in PACKER_NAMES:
+            path = directory / name
+            if path.is_file():
+                return path
+    print("找不到打包器，將自動下載 Windows x64 版本。")
+    return download_packer(Path.cwd().resolve())
+
+
+def github_json(url: str) -> object:
+    request = urllib.request.Request(
+        url,
+        headers={"User-Agent": "NornMiel-Audio-Patch", "Accept": "application/vnd.github+json"},
     )
+    with urllib.request.urlopen(request, timeout=60) as response:
+        return json.load(response)
+
+
+def asset_in_release(release: object) -> dict | None:
+    if not isinstance(release, dict) or release.get("draft") or release.get("prerelease"):
+        return None
+    for asset in release.get("assets", []):
+        if asset.get("name") == PACKER_ASSET_NAME and asset.get("state", "uploaded") == "uploaded":
+            return {**asset, "release_tag": release.get("tag_name", "未知版本")}
+    return None
+
+
+def resolve_packer_asset() -> dict:
+    # Prefer Latest; if it does not publish this asset, find the newest matching
+    # published release in GitHub's release listing instead of guessing a tag.
+    try:
+        release = github_json(PACKER_API_BASE + "/releases/latest")
+    except urllib.error.HTTPError as exc:
+        if exc.code != 404:
+            raise
+    else:
+        asset = asset_in_release(release)
+        if asset:
+            return asset
+    page = 1
+    while True:
+        releases = github_json(f"{PACKER_API_BASE}/releases?per_page=100&page={page}")
+        if not isinstance(releases, list):
+            raise PatchError("GitHub 回傳的 Release 清單格式不正確。")
+        if not releases:
+            break
+        for release in releases:
+            asset = asset_in_release(release)
+            if asset:
+                return asset
+        if len(releases) < 100:
+            break
+        page += 1
+    raise PatchError(f"此專案的正式 Release 中找不到附件：{PACKER_ASSET_NAME}")
+
+
+def safe_zip_path(info: zipfile.ZipInfo) -> Path:
+    normalized = info.filename.replace("\\", "/")
+    member = PurePosixPath(normalized)
+    if (member.is_absolute() or ".." in member.parts or ":" in normalized
+            or stat.S_ISLNK(info.external_attr >> 16)):
+        raise PatchError(f"ZIP 含有不允許的路徑：{info.filename}")
+    return Path(*member.parts)
+
+
+def install_packer_zip(zip_path: Path, destination: Path) -> Path:
+    # Validate and extract into staging first. Do not overwrite an unrelated
+    # README or another existing file in the user's current directory.
+    destination = destination.resolve()
+    with tempfile.TemporaryDirectory(prefix=".xp3_tool_extract_", dir=destination) as staging_name:
+        staging = Path(staging_name)
+        with zipfile.ZipFile(zip_path) as archive:
+            files = []
+            seen = set()
+            for info in archive.infolist():
+                relative = safe_zip_path(info)
+                if info.is_dir():
+                    continue
+                key = relative.as_posix().casefold()
+                if key in seen or not relative.name:
+                    raise PatchError("ZIP 包含重複或無效的檔案路徑。")
+                seen.add(key)
+                target = destination / relative
+                if destination not in target.resolve().parents or target.is_symlink():
+                    raise PatchError(f"解壓縮路徑超出目前資料夾或為連結：{relative}")
+                staged = staging / relative
+                staged.parent.mkdir(parents=True, exist_ok=True)
+                with archive.open(info) as source, staged.open("xb") as output:
+                    shutil.copyfileobj(source, output)
+                files.append(relative)
+        executables = [r for r in files if r.name.lower() in PACKER_NAMES]
+        if len(executables) != 1:
+            raise PatchError("ZIP 中無法唯一找到 xp3-pack-unpack.exe 或 pack-unpack.exe。")
+        if (staging / executables[0]).stat().st_size == 0:
+            raise PatchError("ZIP 中的打包器是空檔案。")
+        for relative in files:
+            target = destination / relative
+            if target.exists() and (not target.is_file() or not filecmp.cmp(staging / relative, target, shallow=False)):
+                raise PatchError(f"解壓縮會覆蓋內容不同的既有檔案，已停止：{target}")
+        for relative in files:
+            target = destination / relative
+            if not target.exists():
+                target.parent.mkdir(parents=True, exist_ok=True)
+                with (staging / relative).open("rb") as source, target.open("xb") as output:
+                    shutil.copyfileobj(source, output)
+        return destination / executables[0]
+
+
+def download_packer(destination: Path) -> Path:
+    destination = destination.resolve()
+    zip_path = destination / PACKER_ASSET_NAME
+    if zip_path.exists():
+        raise PatchError(f"目前已有同名 ZIP，請先移走或重新命名後再執行：{zip_path}")
+    partial = None
+    try:
+        print(f"正在查詢 GitHub Release：{PACKER_REPOSITORY}")
+        asset = resolve_packer_asset()
+        url = asset.get("browser_download_url", "")
+        if not url.startswith(f"https://github.com/{PACKER_REPOSITORY}/releases/download/"):
+            raise PatchError("GitHub 回傳了非預期的附件下載網址。")
+        print(f"版本：{asset['release_tag']}")
+        print(f"正在下載：{PACKER_ASSET_NAME}")
+        print(f"下載與解壓縮目錄：{destination}")
+        fd, temporary_name = tempfile.mkstemp(prefix=".xp3_tool_", suffix=".download", dir=destination)
+        partial = Path(temporary_name)
+        request = urllib.request.Request(url, headers={"User-Agent": "NornMiel-Audio-Patch"})
+        with os.fdopen(fd, "wb") as output:
+            with urllib.request.urlopen(request, timeout=60) as response:
+                shutil.copyfileobj(response, output)
+            output.flush()
+            os.fsync(output.fileno())
+        expected = asset.get("size")
+        if partial.stat().st_size == 0 or (isinstance(expected, int) and partial.stat().st_size != expected):
+            raise PatchError("附件下載不完整，檔案大小與 GitHub 資訊不符。")
+        # Exclusive copy avoids overwriting a ZIP created by another process.
+        try:
+            with partial.open("rb") as source, zip_path.open("xb") as output:
+                shutil.copyfileobj(source, output)
+        except FileExistsError as exc:
+            raise PatchError(f"同名 ZIP 已出現，請勿同時啟動多支程式：{zip_path}") from exc
+        print("下載完成，正在解壓縮……")
+        packer = install_packer_zip(zip_path, destination)
+        zip_path.unlink()
+        print(f"解壓縮完成：{packer}")
+        print(f"已刪除下載的 ZIP：{PACKER_ASSET_NAME}")
+        return packer
+    except urllib.error.HTTPError as exc:
+        raise PatchError(f"GitHub 下載失敗：HTTP {exc.code}。請檢查連線或 API 用量限制後重試。") from exc
+    except urllib.error.URLError as exc:
+        raise PatchError(f"無法連線至 GitHub：{exc.reason}") from exc
+    except (zipfile.BadZipFile, RuntimeError, ValueError) as exc:
+        raise PatchError(f"無法解壓縮下載附件：{exc}；若 ZIP 已下載，會保留供檢查。") from exc
+    finally:
+        if partial is not None:
+            partial.unlink(missing_ok=True)
 
 
 def choose_archive(game_directory: Path) -> Path:
@@ -206,11 +366,11 @@ def write_bytes_atomic(path: Path, data: bytes) -> None:
     temporary_name: str | None = None
     try:
         with tempfile.NamedTemporaryFile(
-            mode="wb",
-            prefix=path.name + ".",
-            suffix=".tmp",
-            dir=path.parent,
-            delete=False,
+                mode="wb",
+                prefix=path.name + ".",
+                suffix=".tmp",
+                dir=path.parent,
+                delete=False,
         ) as stream:
             temporary_name = stream.name
             stream.write(data)
@@ -495,7 +655,7 @@ def find_script_set(extracted_directory: Path) -> ScriptSet:
 
 
 def apply_script_patches(
-    scripts: ScriptSet,
+        scripts: ScriptSet,
 ) -> tuple[ScenarioResult, bool, bool, int, bool, bool]:
     scenario_document = decode_script(scripts.scenario)
     macro_document = decode_script(scripts.macro)
